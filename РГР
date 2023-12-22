@@ -1,0 +1,211 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.fft import fftshift
+
+# Отдельная функция для декодирования двоичных числа в строчные буквы
+def decode_binary_to_letters(code):
+    sim = ""
+    decoded = []
+    j = 0
+    for i in code:
+        if j == 7:
+            decoded.append(chr(int(sim, 2)))
+            j = 0
+            sim = ""
+        sim += str(i)
+        j += 1
+    decoded.append(chr(int(sim, 2)))
+    return decoded
+
+def encode_text_to_binary(text):
+    mas = []
+    for i in text:
+        if i != " ":
+            mas.append(ord(i))
+
+    code = []
+    for j in mas:
+        binary_representation = str(bin(j))
+        for i in range(2, len(binary_representation)):
+            code.append(int(binary_representation[i]))
+
+    return code
+
+def plot_graph(data, title):
+    bukashka = np.asarray(data)
+    plt.figure()
+    plt.title(title)
+    plt.plot(bukashka)
+
+def calculate_crc(packet):
+    divisor = [1, 0, 1, 0, 0, 1, 1, 1]
+    remainder = [i for i in range(len(divisor))]
+    for i in range(len(divisor) - 1):
+        remainder[i] = packet[i + 1] ^ divisor[i + 1]
+    remainder[len(divisor) - 1] = packet[len(divisor)]
+
+    for i in range(len(divisor) + 1, len(packet)):
+        if remainder[0] != 0:
+            for j in range(len(divisor) - 1):
+                remainder[j] = remainder[j + 1] ^ divisor[j + 1]
+        else:
+            for j in range(len(divisor) - 1):
+                remainder[j] = remainder[j + 1]
+        remainder[len(divisor) - 1] = packet[i]
+
+    if remainder[0] != 0:
+        for j in range(len(divisor)):
+            remainder[j] = remainder[j] ^ divisor[j]
+    result = []
+    for i in range(1, len(remainder)):
+        result.append(remainder[i])
+    return result
+
+def shift_right(data):
+    temp = data[len(data) - 1]
+    for i in range(len(data) - 1, 0, -1):
+        data[i] = data[i - 1]
+    data[0] = temp
+    return data
+
+def generate_gold_sequence():
+    x = [1, 1, 1, 1, 0]
+    y = [0, 1, 1, 0, 1]
+    G = 31
+    result = []
+    for i in range(G):
+        summator_x = x[2] ^ x[3]
+        summator_y = y[2] ^ y[1]
+        result.append(x[4] ^ y[4])
+        x = shift_right(x)
+        y = shift_right(y)
+        x[0] = summator_x
+        y[0] = summator_y
+    return result, G
+
+def main(input_name, N, std_deviation, insertion_key):
+    # Фамилия и имя для передачи
+
+    # Кодирование информации
+    encoded_data = encode_text_to_binary(input_name)
+    plot_graph(encoded_data, "1")
+
+    # Вычисление CRC
+    M = len(encoded_data)
+    divisor = [1, 0, 1, 0, 0, 1, 1, 1]
+    for i in range(len(divisor) - 1):
+        encoded_data.append(0)
+    crc_result = calculate_crc(encoded_data)
+    print("CRC:", crc_result)
+    for i in range(M, len(encoded_data)):
+        encoded_data[i] = crc_result[i - M]
+
+    # Генерация последовательности Голда
+    golden_sequence, G = generate_gold_sequence()
+    for i in range(G):
+        encoded_data.append(0)
+        encoded_data = shift_right(encoded_data)
+    for i in range(G):
+        encoded_data[i] = golden_sequence[i]
+    plot_graph(encoded_data, "4")
+
+    # Преобразования битов в временные отсчёты сигналов
+    signal = np.repeat(encoded_data, N)
+    plot_graph(signal, "5")
+    length = len(signal)
+
+    # Внесение массива информации в массив нулей
+    big_signal = [int(0) for i in range(2 * len(signal))]
+    while True:
+        if 0 < insertion_key < len(signal):
+            break
+        else:
+            print("Недопустимое число, введите ещё раз")
+            insertion_key = int(input())
+    for i in range(len(big_signal)):
+        if insertion_key <= i < insertion_key + len(signal):
+            big_signal[i] = signal[i - insertion_key]
+        else:
+            big_signal[i] = 0
+
+    plot_graph(big_signal, "6")
+    first = fftshift(big_signal)
+
+    # Генерация шума и передача массива на приёмник
+    signal = np.asarray(big_signal)
+    noise = np.random.normal(0, std_deviation, len(signal))
+    signal_with_noise = []
+    for i in range(len(signal)):
+        signal_with_noise.append(noise[i] + signal[i])
+    plot_graph(signal_with_noise, "7")
+    second = fftshift(signal_with_noise)
+
+    # Синхронизация с сигналом и отброс лишних нулей в массиве
+    signal = signal_with_noise
+    golden_sequence, G = generate_gold_sequence()
+    golden_sequence = np.repeat(golden_sequence, N)
+    for i in range(len(signal) - len(golden_sequence)):
+        summation = 0
+        for j in range(len(golden_sequence)):
+            try:
+                summation = summation + (golden_sequence[j] * signal[i + j])
+            except IndexError:
+                break
+        if i == 0:
+            maximum = summation
+            pos = 0
+        elif maximum < summation:
+            maximum = summation
+            pos = i
+    synchronized_signal = []
+    for i in range(pos, pos + length):
+        synchronized_signal.append(signal[i])
+
+    # Преобразование временных отсчётов в информацию и избавление от шума
+    cipher = []
+    for i in range(int(len(synchronized_signal) / N)):
+        if synchronized_signal[i * N] > 0.5:
+            cipher.append(1)
+        else:
+            cipher.append(0)
+
+    # Удаление последовательности Голда
+    cipher_without_gold = []
+    for i in range(G, len(cipher)):
+        cipher_without_gold.append(cipher[i])
+
+    # Проверка CRC
+    crc_check = calculate_crc(cipher_without_gold)
+    print("CRC:", crc_check)
+    if 1 in crc_check:
+        print("Ошибка CRC")
+    else:
+        # Удаление CRC и декодирование битов информации в буквы
+        word = []
+        for i in range(len(cipher_without_gold) - 7):
+            word.append(cipher_without_gold[i])
+        decoded_message = decode_binary_to_letters(word)
+        decoded_text = ""
+        for i in decoded_message:
+            if ord(i) > 65 and ord(i) < 90:
+                decoded_text += " "
+            decoded_text += i
+        print(decoded_text[1:])
+
+    return first, second
+
+Name = input("Введите имя и фамилию: ")
+key = int(input("Введите число для вставки в массив: "))
+std_dev = float(input("Введите стандартное отклонение: "))
+base, rec = main(Name, 2, std_dev, key)
+plt.figure()
+plt.plot(base)
+plt.plot(rec)
+base, rec = main(Name, 4, std_dev, key)
+plt.figure()
+plt.plot(base)
+plt.plot(rec)
+base, rec = main(Name, 8, std_dev, key)
+plt.figure()
+plt.plot(base)
+plt.plot(rec)
